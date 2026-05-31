@@ -184,6 +184,13 @@ namespace Nop.Plugin.Misc.Watermark.Services
                 if (picture.MimeType != MimeTypes.ImageSvg)
                 {
                     using var inputImage = SKBitmap.Decode(pictureBinary);
+                    if (inputImage == null)
+                    {
+                        // Unsupported or corrupt image — save original binary without watermark
+                        _thumbService.SaveThumbAsync(thumbFilePath, thumbFileName, picture.MimeType, pictureBinary).Wait();
+                        return (await _thumbService.GetThumbUrlAsync(thumbFileName, storeLocation), picture);
+                    }
+
                     SKBitmap outputImage = inputImage;
 
                     if (targetSize != 0)
