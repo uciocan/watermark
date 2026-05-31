@@ -97,6 +97,8 @@ namespace Nop.Plugin.Misc.Watermark.Services
         {
             var defaultThumbsPath = _fileProvider.GetAbsolutePath(NopMediaDefaults.ImageThumbsPath);
             var imageDirectoryInfo = new DirectoryInfo(defaultThumbsPath);
+            if (!imageDirectoryInfo.Exists)
+                return Task.CompletedTask;
             foreach (var fileInfo in imageDirectoryInfo.GetFiles())
                 fileInfo.Delete();
 
