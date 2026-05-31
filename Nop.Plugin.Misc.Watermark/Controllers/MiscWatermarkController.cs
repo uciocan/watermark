@@ -20,7 +20,7 @@ using SkiaSharp;
 
 namespace Nop.Plugin.Misc.Watermark.Controllers
 {
-    [Area(AreaNames.Admin)]
+    [Area(AreaNames.ADMIN)]
     public class MiscWatermarkController : BasePluginController
     {
         private readonly IStoreContext _storeContext;
@@ -48,7 +48,7 @@ namespace Nop.Plugin.Misc.Watermark.Controllers
 
         public async Task<IActionResult> Configure()
         {
-            if (!await _permissionService.AuthorizeAsync(StandardPermissionProvider.ManagePlugins))
+            if (!await _permissionService.AuthorizeAsync(StandardPermission.Configuration.MANAGE_PLUGINS))
                 return AccessDeniedView();
 
             var activeStoreScope = await _storeContext.GetActiveStoreScopeConfigurationAsync();
@@ -116,7 +116,7 @@ namespace Nop.Plugin.Misc.Watermark.Controllers
         [HttpPost]
         public async Task<IActionResult> Configure(ConfigurationModel model)
         {
-            if (!await _permissionService.AuthorizeAsync(StandardPermissionProvider.ManagePlugins))
+            if (!await _permissionService.AuthorizeAsync(StandardPermission.Configuration.MANAGE_PLUGINS))
                 return AccessDeniedView();
 
             var activeStoreScope = await _storeContext.GetActiveStoreScopeConfigurationAsync();
