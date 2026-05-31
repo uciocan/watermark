@@ -1,0 +1,20 @@
+﻿.watermark-picture > div > img {
+    width: 100px;
+    height: auto;
+}
+
+.form-group .input-group.bootstrap-touchspin {
+    max-width: 100%
+}
+
+.button-align-center {
+    text-align: center !important;
+}
+
+#TextRotatedDegree {
+    -moz-appearance: textfield !important;
+}
+
+.k-widget.k-numerictextbox {
+  width: 100% !important;
+}

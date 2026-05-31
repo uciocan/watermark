@@ -4,74 +4,81 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-This is a NopCommerce plugin (`Misc.Watermark`) that adds image watermarking functionality to an e-commerce store. It targets NopCommerce 3.90 and .NET Framework 4.5.1. The plugin lives in `Nop.Plugin.Misc.Watermark/` and is built as a class library DLL.
+This is a NopCommerce plugin (`Misc.Watermark`) that adds image watermarking to product, category, and manufacturer images. The current code on this branch targets **NopCommerce 4.90 / .NET 9**. The `master` branch contains the original NopCommerce 3.90 version; historical tags follow the pattern `v1.0.9_nop4.60`.
 
 ## Build
 
-This project must be built as part of a full NopCommerce solution. The `.csproj` expects `$(SolutionDir)` to point to the root of a NopCommerce checkout (three levels up: `../../../`). NopCommerce core projects (`Nop.Core`, `Nop.Data`, `Nop.Services`, `Nop.Web.Framework`) are referenced by project reference, not NuGet.
+This project must be built inside a full NopCommerce 4.90 solution checkout. The `.csproj` expects `$(SolutionDir)` three levels up (`../../../`). Only `Nop.Web.Framework` is declared as a `<ProjectReference>`; all other NopCommerce assemblies are resolved transitively.
 
+```sh
+# Release build (outputs to ../../../Presentation/Nop.Web/Plugins/Misc.Watermark/)
+dotnet build Nop.Plugin.Misc.Watermark/Nop.Plugin.Misc.Watermark.csproj -c Release
 ```
-# Build via MSBuild (requires full NopCommerce solution)
-msbuild Nop.Plugin.Misc.Watermark/Nop.Plugin.Misc.Watermark.csproj /p:Configuration=Release
-```
 
-**Output directory**: `$(SolutionDir)\Presentation\Nop.Web\Plugins\Misc.Watermark\`
-
-`PreBuild.targets` strips `CopyLocal=true` from all references so that only this plugin's DLL is emitted — NopCommerce core DLLs are NOT copied to the output folder, matching the NopCommerce plugin convention.
+The `NopTarget` MSBuild target invokes `ClearPluginAssemblies.proj` after each build to strip redundant DLLs from the output folder — this matches NopCommerce's plugin deployment convention.
 
 There are no unit tests in this repository.
 
 ## Architecture
 
-### Plugin Registration Pattern
+### Plugin Registration
 
-NopCommerce plugins use Autofac for IoC. `DependencyRegistrar` (priority 5) replaces the default `IPictureService` with `MiscWatermarkPictureService`:
+Registration is done via `Infrastructure/NopStartup.cs` (implements `INopStartup`, `Order = 3000`). The high order value ensures our registration runs after NopCommerce core and wins the last-registration-wins DI resolution:
 
 ```csharp
-builder.RegisterType<MiscWatermarkPictureService>().As<IPictureService>().InstancePerLifetimeScope();
+services.AddScoped<IPictureService, MiscWatermarkPictureService>();
+services.AddScoped<FontProvider>();
 ```
 
-This means every call to `IPictureService.GetPictureUrl()` in NopCommerce is intercepted by this plugin.
+`FontProvider` is a scoped singleton that caches `SKTypeface` instances (never dispose returned typefaces — they are shared). It exposes system fonts via `SKFontManager.Default` and custom `.ttf` fonts bundled in `Fonts/` (Open Sans, Roboto).
 
 ### Image Watermark Pipeline
 
-`MiscWatermarkPictureService` extends `Nop.Services.Media.PictureService` and overrides `GetPictureUrl()`. The pipeline:
+`MiscWatermarkPictureService` extends `PictureService` and overrides `GetPictureUrlAsync(Picture, ...)`. The pipeline:
 
-1. Check if plugin is installed via `IPluginFinder` (guards against being active when uninstalled)
-2. Build a thumbnail filename that encodes `pictureId + seoName + targetSize + storeId`
-3. Use a named `Mutex` on the filename to prevent duplicate thumbnail generation across threads
-4. If thumbnail doesn't exist: resize with `ImageResizer`, then call `MakeImageWatermark()`
-5. `MakeImageWatermark()` checks `IsWatermarkRequired()` — queries product/category/manufacturer repositories to determine if the picture belongs to an entity type that has watermarking enabled
-6. Applies text watermark (`PlaceTextWatermark`) and/or image watermark (`PlaceImageWatermark`) using `System.Drawing`
-7. Save thumbnail
+1. `IsPluginInstalledAsync()` — queries `IPluginService` to ensure the plugin is active; falls back to base if not
+2. Build a thumbnail filename encoding `pictureId + seoName + targetSize + storeId`
+3. Check cache via `IThumbService.GeneratedThumbExistsAsync()` — return immediately if found
+4. Acquire a named `Mutex` on the filename (prevents duplicate generation across threads; `.Wait()` is intentional inside mutex scope — `await` cannot cross a mutex boundary)
+5. Decode with `SKBitmap.Decode`, optionally resize, call `MakeImageWatermarkAsync()`
+6. Re-encode and save via `IThumbService.SaveThumbAsync()`
+7. Return URL via `IThumbService.GetThumbUrlAsync()`
 
-The watermark bitmap (`_watermarkBitmap`) is `Lazy<Bitmap>` — loaded once from the NopCommerce picture store on first use.
+### IThumbService Delegation (NopCommerce 4.90+)
+
+From NopCommerce 4.90, all thumbnail file operations moved from `PictureService` into a separate `IThumbService`/`ThumbService`. Our service injects this via the constructor and delegates all thumb operations to it. This means the plugin **automatically works with Azure Blob storage** when `Nop.Plugin.Misc.AzureBlob` is active — that plugin registers `AzureThumbService` as `IThumbService`, and our service picks it up transparently. `MiscWatermarkAzurePictureService` (which existed in ≤4.60) is no longer needed.
+
+### Watermark Drawing
+
+`MakeImageWatermarkAsync` calls `IsWatermarkRequired()` — which does synchronous LINQ-to-DB queries against `IRepository<ProductPicture>`, `IRepository<Category>`, `IRepository<Manufacturer>` — to decide if the image belongs to a watermarked entity type.
+
+Text watermark: `PlaceTextWatermark` uses SkiaSharp (`SKCanvas`, `SKPaint`). Font size is computed iteratively from 2pt upward (`ComputeMaxFontSize`) until the rotated bounding box exceeds the configured % of the image.
+
+Image watermark: `PlaceImageWatermark` scales the watermark bitmap proportionally to fit within the configured % of the destination image, then applies per-position rendering. The watermark `SKImage` is loaded lazily via `AsyncLazy<SKImage>` from the NopCommerce picture store on first use.
 
 ### Settings & Multi-Store
 
-`WatermarkSettings` implements `ISettings` and is persisted via `ISettingService`. Settings are loaded per-store: `_settingService.LoadSetting<WatermarkSettings>(_storeContext.CurrentStore.Id)`. The thumbnail filename includes `storeId` to separate cached thumbnails per store.
+`WatermarkSettings : ISettings` is persisted via `ISettingService` with per-store scope. The thumbnail filename includes `storeId` to isolate cached thumbnails per store (store ID 1 = default store, which omits the store suffix for backwards compatibility).
 
-`CommonSettings` (shared between text and picture watermarks) is serialized to JSON for database storage. This requires a custom `TypeConverter` (`CommonSettingsConvertor`) and `JsonConverter` (`NoTypeConverterJsonConverter<T>`) to break the circular converter dependency.
+`CommonSettings` (shared by text and picture watermarks: size, opacity, position list) serializes to JSON in the database. It carries both a `[TypeConverter]` and a `[JsonConverter]` attribute to break the circular converter dependency that arises when `ISettingService` uses JSON serialization.
 
 ### Watermark Positioning
 
-`WatermarkPosition` enum has 9 values (3×3 grid). Both text and picture watermarks accept a `List<WatermarkPosition>`, so a watermark can be rendered at multiple positions simultaneously. Pixel coordinates are computed in `CalculateWatermarkPosition()`.
-
-Text watermark size is computed by iterating font sizes from 2pt upward until the rotated text bounding box exceeds the configured percentage of the image dimensions (`ComputeMaxFontSize`).
+`WatermarkPosition` is a 9-value enum (3×3 grid). Both text and image watermarks accept a `List<WatermarkPosition>`, allowing placement at multiple positions simultaneously. Pixel coordinates are computed in `CalculateWatermarkPosition()`.
 
 ### Plugin Lifecycle
 
-- **Install** (`WatermarkPlugin.Install`): saves default `WatermarkSettings`, inserts the default watermark PNG into the NopCommerce picture store, loads locale XML resources for all active languages
-- **Uninstall** (`WatermarkPlugin.Uninstall`): deletes the watermark picture, removes all settings, deletes locale resources, clears the NopCommerce cache, and wipes `~/content/images/thumbs/` so cached unwatermarked thumbnails are regenerated
+- **Install**: saves default `WatermarkSettings`, inserts the default watermark PNG into the NopCommerce picture store, imports locale XML resources for all active languages
+- **Uninstall**: deletes the watermark picture, removes all settings, deletes locale resources (`Plugins.Misc.Watermark.*` prefix), clears cache, wipes the local thumbs directory
 
 ### Localization
 
-Locale strings are in `Resources/Locale.default.xml` (English, applied to all languages), `Locale.ru.xml` (Russian), and `Locale.ua.xml` (Ukrainian). All resource keys use the `Plugins.Misc.Watermark.*` namespace.
+Resource files are in `Resources/`: `Locale.default.xml` (English — applied to all languages), `Locale.ru.xml` (Russian), `Locale.uk.xml` (Ukrainian). All keys use the `Plugins.Misc.Watermark.*` namespace.
 
 ### Admin UI
 
-`MiscWatermarkController` handles the `~/Admin/MiscWatermark/Configure` route. It builds the font list from `System.Drawing.FontFamily.Families`. `ConfigurationModelValidator` (FluentValidation) enforces: opacity in `(0, 1]`, size in `[0, 100]`.
+`MiscWatermarkController` serves `~/Admin/MiscWatermark/Configure`. The font dropdown is populated from `FontProvider`, grouping custom fonts before system fonts. `ConfigurationModelValidator` (FluentValidation via `BaseNopValidator`) enforces: opacity in `[0, 1]`, size in `[0, 100]`.
 
-## NopCommerce Version Branches
+## NopCommerce Version Tags
 
-The repository maintains separate branches/tags per NopCommerce version (e.g. `v1.0.9_nop4.60`). The current `master` branch targets NopCommerce 3.90. When porting to a different version, check what changed in `PictureService.GetPictureUrl()` in that NopCommerce release — the override must match the base method's signature exactly.
+Tags follow the pattern `v{plugin-version}_nop{nop-version}` (e.g. `v1.0.9_nop4.60`). When porting to a new NopCommerce version, the primary change point is the `PictureService` constructor signature and any methods moved between services. In 4.90 the key changes from 4.60 were: `IProductAttributeService` added to the constructor, thumbnail operations extracted to `IThumbService`, and Azure storage split into a separate plugin.
