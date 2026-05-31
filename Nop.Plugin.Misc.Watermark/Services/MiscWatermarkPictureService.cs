@@ -183,7 +183,16 @@ namespace Nop.Plugin.Misc.Watermark.Services
             {
                 if (picture.MimeType != MimeTypes.ImageSvg)
                 {
-                    using var inputImage = SKBitmap.Decode(pictureBinary);
+                    SKBitmap inputImage;
+                    try
+                    {
+                        inputImage = SKBitmap.Decode(pictureBinary);
+                    }
+                    catch
+                    {
+                        inputImage = null;
+                    }
+
                     if (inputImage == null)
                     {
                         // Unsupported or corrupt image — save original binary without watermark
