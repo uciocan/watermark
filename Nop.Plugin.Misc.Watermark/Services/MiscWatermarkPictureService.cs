@@ -23,16 +23,13 @@ namespace Nop.Plugin.Misc.Watermark.Services
 {
     public class MiscWatermarkPictureService : PictureService, IDisposable
     {
-        private readonly IRepository<ProductPicture> _productPictureRepository;
+        // _productPictureRepository, _fileProvider, _settingService, _mediaSettings, _thumbService
+        // are inherited protected fields from PictureService — not redeclared here.
         private readonly IRepository<Category> _categoryRepository;
         private readonly IRepository<Manufacturer> _manufacturerRepository;
         private readonly IPluginService _pluginService;
-        private readonly INopFileProvider _fileProvider;
         private readonly FontProvider _fontProvider;
-        private readonly ISettingService _settingService;
-        private readonly MediaSettings _mediaSettings;
         private readonly IStoreContext _storeContext;
-        private readonly IThumbService _thumbService;
         private readonly AsyncLazy<SKImage> _watermarkImage;
 
         public MiscWatermarkPictureService(
@@ -73,14 +70,11 @@ namespace Nop.Plugin.Misc.Watermark.Services
         {
             _categoryRepository = categoryRepository;
             _manufacturerRepository = manufacturerRepository;
-            _productPictureRepository = productPictureRepository;
-            _settingService = settingService;
-            _mediaSettings = mediaSettings;
-            _fileProvider = fileProvider;
             _storeContext = storeContext;
             _pluginService = pluginService;
             _fontProvider = fontProvider;
-            _thumbService = thumbService;
+            // _productPictureRepository, _settingService, _mediaSettings, _fileProvider, _thumbService
+            // are assigned by the base PictureService constructor.
 
             _watermarkImage = new AsyncLazy<SKImage>(async () =>
             {
@@ -126,7 +120,7 @@ namespace Nop.Plugin.Misc.Watermark.Services
             byte[] pictureBinary = null;
             if (picture.IsNew)
             {
-                await DeletePictureThumbsAsync(picture);
+                await _thumbService.DeletePictureThumbsAsync(picture);
                 pictureBinary = await LoadPictureBinaryAsync(picture);
 
                 if ((pictureBinary?.Length ?? 0) == 0)
