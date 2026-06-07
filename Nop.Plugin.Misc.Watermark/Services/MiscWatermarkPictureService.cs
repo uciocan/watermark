@@ -229,6 +229,8 @@ namespace Nop.Plugin.Misc.Watermark.Services
                     pictureBinary = outputImage.Encode(format,
                         _mediaSettings.DefaultImageQuality > 0 ? _mediaSettings.DefaultImageQuality : 80).ToArray();
 
+                    if (outputImage != inputImage)
+                        inputImage.Dispose();
                     outputImage.Dispose();
                 }
 
