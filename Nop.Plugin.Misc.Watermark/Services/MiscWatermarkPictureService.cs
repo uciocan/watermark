@@ -245,6 +245,10 @@ namespace Nop.Plugin.Misc.Watermark.Services
         private async Task MakeImageWatermarkAsync(SKBitmap sourceImage, int pictureId)
         {
             var currentSettings = await GetSettingsAsync();
+
+            if (!currentSettings.WatermarkTextEnable && !currentSettings.WatermarkPictureEnable)
+                return;
+
             var applyWatermark = IsWatermarkRequired(pictureId, currentSettings);
 
             if (!applyWatermark || ((sourceImage.Height <= currentSettings.MinimumImageHeightForWatermark) &&
