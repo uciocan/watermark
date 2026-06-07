@@ -145,6 +145,11 @@ namespace Nop.Plugin.Misc.Watermark.Services
             }
 
             var seoFileName = picture.SeoFilename;
+            if (!string.IsNullOrEmpty(seoFileName))
+            {
+                var invalidChars = Path.GetInvalidFileNameChars();
+                seoFileName = new string(seoFileName.Where(c => !invalidChars.Contains(c)).ToArray());
+            }
             var storeId = (await _storeContext.GetCurrentStoreAsync()).Id;
             var lastPart = await GetFileExtensionFromMimeTypeAsync(picture.MimeType);
 
@@ -200,7 +205,7 @@ namespace Nop.Plugin.Misc.Watermark.Services
                     if (inputImage == null)
                     {
                         // Unsupported or corrupt image — save original binary without watermark
-                        _thumbService.SaveThumbAsync(thumbFilePath, thumbFileName, picture.MimeType, pictureBinary).Wait();
+                        try { _thumbService.SaveThumbAsync(thumbFilePath, thumbFileName, picture.MimeType, pictureBinary).Wait(); } catch { }
                         return (await _thumbService.GetThumbUrlAsync(thumbFileName, storeLocation), picture);
                     }
 
@@ -227,7 +232,7 @@ namespace Nop.Plugin.Misc.Watermark.Services
                     outputImage.Dispose();
                 }
 
-                _thumbService.SaveThumbAsync(thumbFilePath, thumbFileName, picture.MimeType, pictureBinary).Wait();
+                try { _thumbService.SaveThumbAsync(thumbFilePath, thumbFileName, picture.MimeType, pictureBinary).Wait(); } catch { }
             }
             finally
             {
