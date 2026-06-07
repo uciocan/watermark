@@ -171,6 +171,25 @@ if (inputImage == null)
 }
 ```
 
+### Dispose inputImage after resize
+
+`SKBitmap.Resize()` returns a **new** SKBitmap instance. If you alias `outputImage = inputImage` and then reassign `outputImage` after a successful resize, the original `inputImage` is no longer referenced by `outputImage` and must be disposed separately:
+
+```csharp
+SKBitmap outputImage = inputImage;
+if (targetSize != 0)
+    try { outputImage = inputImage.Resize(newSize, ...); }
+    catch { }
+
+// ... process outputImage ...
+
+if (outputImage != inputImage)
+    inputImage.Dispose();   // dispose the original if resize created a new bitmap
+outputImage.Dispose();
+```
+
+Forgetting this leaks native SKBitmap memory on every thumbnail generation with a non-zero target size.
+
 ---
 
 ## Mutex pattern for thumbnail generation
@@ -189,6 +208,28 @@ try
 finally
 {
     mutex.ReleaseMutex();
+}
+```
+
+---
+
+## Performance — early return when watermark is disabled
+
+`IsWatermarkRequired()` does up to **3 synchronous DB queries** (ProductPicture, Category, Manufacturer tables) to decide whether to apply a watermark. These run even when `WatermarkTextEnable = false` and `WatermarkPictureEnable = false`, adding overhead on every new thumbnail generation.
+
+Always short-circuit before those queries:
+
+```csharp
+private async Task MakeImageWatermarkAsync(SKBitmap sourceImage, int pictureId)
+{
+    var currentSettings = await GetSettingsAsync();
+
+    // Short-circuit: skip 3 DB queries if no watermark type is enabled
+    if (!currentSettings.WatermarkTextEnable && !currentSettings.WatermarkPictureEnable)
+        return;
+
+    var applyWatermark = IsWatermarkRequired(pictureId, currentSettings);
+    // ...
 }
 ```
 
