@@ -101,7 +101,10 @@ namespace Nop.Plugin.Misc.Watermark.Services
                 if (!Directory.Exists(dir))
                     continue;
                 foreach (var file in new DirectoryInfo(dir).GetFiles("*", SearchOption.AllDirectories))
-                    file.Delete();
+                {
+                    try { file.Delete(); }
+                    catch { /* skip locked or read-only files */ }
+                }
             }
             return Task.CompletedTask;
         }
