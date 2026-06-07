@@ -93,14 +93,17 @@ namespace Nop.Plugin.Misc.Watermark.Services
         private async Task<bool> IsPluginInstalledAsync() =>
             (await _pluginService.GetPluginDescriptorBySystemNameAsync<IPlugin>("Misc.Watermark")) != null;
 
-        public virtual async Task DeleteThumbs()
+        public virtual Task DeleteThumbs()
         {
-            var samplePath = await _thumbService.GetThumbLocalPathByFileNameAsync("_");
-            var thumbsDir = Path.GetDirectoryName(samplePath);
-            if (string.IsNullOrEmpty(thumbsDir) || !Directory.Exists(thumbsDir))
-                return;
-            foreach (var fileInfo in new DirectoryInfo(thumbsDir).GetFiles("*", SearchOption.AllDirectories))
-                fileInfo.Delete();
+            foreach (var relPath in new[] { Path.Combine("images", "thumbs"), "thumbs" })
+            {
+                var dir = _fileProvider.GetAbsolutePath(relPath);
+                if (!Directory.Exists(dir))
+                    continue;
+                foreach (var file in new DirectoryInfo(dir).GetFiles("*", SearchOption.AllDirectories))
+                    file.Delete();
+            }
+            return Task.CompletedTask;
         }
 
         public override async Task<(string Url, Picture Picture)> GetPictureUrlAsync(Picture picture,
