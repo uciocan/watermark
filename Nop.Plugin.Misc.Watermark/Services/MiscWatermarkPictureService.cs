@@ -4,7 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
-using Nito.AsyncEx;
+
 using Nop.Core;
 using Nop.Core.Domain.Catalog;
 using Nop.Core.Domain.Media;
@@ -30,7 +30,7 @@ namespace Nop.Plugin.Misc.Watermark.Services
         private readonly IPluginService _pluginService;
         private readonly FontProvider _fontProvider;
         private readonly IStoreContext _storeContext;
-        private readonly AsyncLazy<SKImage> _watermarkImage;
+        private readonly Lazy<Task<SKImage>> _watermarkImage;
 
         public MiscWatermarkPictureService(
             IRepository<Picture> pictureRepository,
@@ -76,7 +76,7 @@ namespace Nop.Plugin.Misc.Watermark.Services
             // _productPictureRepository, _settingService, _mediaSettings, _fileProvider, _thumbService
             // are assigned by the base PictureService constructor.
 
-            _watermarkImage = new AsyncLazy<SKImage>(async () =>
+            _watermarkImage = new Lazy<Task<SKImage>>(async () =>
             {
                 var watermarkPictureId = (await GetSettingsAsync()).PictureId;
                 if (watermarkPictureId == 0)
@@ -254,7 +254,7 @@ namespace Nop.Plugin.Misc.Watermark.Services
             if (currentSettings.WatermarkTextEnable && !string.IsNullOrEmpty(currentSettings.WatermarkText))
                 PlaceTextWatermark(sourceImage, currentSettings);
 
-            var watermarkImage = await _watermarkImage.Task;
+            var watermarkImage = await _watermarkImage.Value;
             if (currentSettings.WatermarkPictureEnable && watermarkImage != null)
                 PlaceImageWatermark(sourceImage, watermarkImage, currentSettings);
         }
@@ -436,8 +436,8 @@ namespace Nop.Plugin.Misc.Watermark.Services
 
         private void ReleaseUnmanagedResources()
         {
-            if (_watermarkImage.IsStarted)
-                _watermarkImage.Task.Result?.Dispose();
+            if (_watermarkImage.IsValueCreated && _watermarkImage.Value.IsCompletedSuccessfully)
+                _watermarkImage.Value.Result?.Dispose();
         }
 
         public void Dispose()
