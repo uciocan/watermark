@@ -3,9 +3,11 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using LinqToDB;
 using Microsoft.AspNetCore.Http;
 
 using Nop.Core;
+using Nop.Core.Caching;
 using Nop.Core.Domain.Catalog;
 using Nop.Core.Domain.Media;
 using Nop.Core.Infrastructure;
@@ -30,7 +32,11 @@ namespace Nop.Plugin.Misc.Watermark.Services
         private readonly IPluginService _pluginService;
         private readonly FontProvider _fontProvider;
         private readonly IStoreContext _storeContext;
+        private readonly IStaticCacheManager _staticCacheManager;
         private readonly Lazy<Task<SKImage>> _watermarkImage;
+
+        // Cached per application lifetime — plugin installation state doesn't change without an app restart.
+        private static readonly CacheKey _pluginInstalledKey = new("Misc.Watermark.plugin.installed");
 
         public MiscWatermarkPictureService(
             IRepository<Picture> pictureRepository,
@@ -51,7 +57,8 @@ namespace Nop.Plugin.Misc.Watermark.Services
             ILogger logger,
             IPluginService pluginService,
             FontProvider fontProvider,
-            IThumbService thumbService)
+            IThumbService thumbService,
+            IStaticCacheManager staticCacheManager)
             : base(
                 downloadService,
                 httpContextAccessor,
@@ -73,6 +80,7 @@ namespace Nop.Plugin.Misc.Watermark.Services
             _storeContext = storeContext;
             _pluginService = pluginService;
             _fontProvider = fontProvider;
+            _staticCacheManager = staticCacheManager;
             // _productPictureRepository, _settingService, _mediaSettings, _fileProvider, _thumbService
             // are assigned by the base PictureService constructor.
 
@@ -90,8 +98,9 @@ namespace Nop.Plugin.Misc.Watermark.Services
             });
         }
 
-        private async Task<bool> IsPluginInstalledAsync() =>
-            (await _pluginService.GetPluginDescriptorBySystemNameAsync<IPlugin>("Misc.Watermark")) != null;
+        private Task<bool> IsPluginInstalledAsync() =>
+            _staticCacheManager.GetAsync(_pluginInstalledKey, async () =>
+                (await _pluginService.GetPluginDescriptorBySystemNameAsync<IPlugin>("Misc.Watermark")) != null);
 
         public virtual Task DeleteThumbs()
         {
@@ -251,7 +260,7 @@ namespace Nop.Plugin.Misc.Watermark.Services
             if (!currentSettings.WatermarkTextEnable && !currentSettings.WatermarkPictureEnable)
                 return;
 
-            var applyWatermark = IsWatermarkRequired(pictureId, currentSettings);
+            var applyWatermark = await IsWatermarkRequiredAsync(pictureId, currentSettings);
 
             if (!applyWatermark || ((sourceImage.Height <= currentSettings.MinimumImageHeightForWatermark) &&
                                     (sourceImage.Width <= currentSettings.MinimumImageWidthForWatermark)))
@@ -349,18 +358,18 @@ namespace Nop.Plugin.Misc.Watermark.Services
             }
         }
 
-        private bool IsWatermarkRequired(int pictureId, WatermarkSettings settings)
+        private async Task<bool> IsWatermarkRequiredAsync(int pictureId, WatermarkSettings settings)
         {
             if (settings.ApplyOnProductPictures &&
-                _productPictureRepository.Table.Any(p => p.PictureId == pictureId))
+                await _productPictureRepository.Table.AnyAsync(p => p.PictureId == pictureId))
                 return true;
 
             if (settings.ApplyOnCategoryPictures &&
-                _categoryRepository.Table.Any(c => c.PictureId == pictureId))
+                await _categoryRepository.Table.AnyAsync(c => c.PictureId == pictureId))
                 return true;
 
             return settings.ApplyOnManufacturerPictures &&
-                   _manufacturerRepository.Table.Any(m => m.PictureId == pictureId);
+                   await _manufacturerRepository.Table.AnyAsync(m => m.PictureId == pictureId);
         }
 
         private async Task<WatermarkSettings> GetSettingsAsync()
